@@ -11,30 +11,20 @@ from synctrex.register import Register
 from synctrex.base import Named
 
 
-class Methods(Register):
-    key = 'name'
-    by_proto = {}
-
-    @classmethod
-    def register(cl, item, key = None):
-        super().register(item, key)
-        if item.protocols:
-            for protocol in item.protocols:
-                r = cls.by_proto.setdefault(protocol, [])
-                r.append(cl)
-
-    @classmethod
-    def by_proto(cl, key, default = None)
-        return self.by_proto.get(key, default)
-
-
 class Method(Named):
     """
+    Defines a method of synchronisation. It can be reused among different
+    synchronisation.
+
+    There are different kind of support methods, please look into
+    :py:module:synctrex.methods for more info.
     """
+
     protocols = []
     """
-    [class attribute] Protocols supported by the method
+    [class attribute] List of protocols supported by the method
     """
+
 
     @classmethod
     def is_available(cl):
@@ -88,10 +78,17 @@ class Method(Named):
         return rst2ansi(doc) if rst2ansi else doc
 
     def run(self, sync):
+        """
+        Returns 0 in case of success, otherwise an error code
+        """
         raise NotImplementedError
 
 
 class ExecMethod(Method):
+    """
+    A method that executes an external process in order to complete
+    synchronisation.
+    """
     program = ''
     """
     [class attribute] Filename of the program that is executed to run
@@ -114,7 +111,7 @@ class ExecMethod(Method):
 
     def get_args(self, sync):
         """
-        Return argument to pass to process (excluding program name).
+        Return arguments to pass to process (excluding program name).
         """
         raise NotImplementedError
 
@@ -125,19 +122,12 @@ class ExecMethod(Method):
         raise NotImplementedError
 
     def run(self, sync):
-        # FIXME: clean up
         args = [self.program] + [self.get_args(sync)]
-        self.log("sync {}: {} -> {}", sync.name,
-                 sync.source.address, sync.dest.address)
-        duration = datetime.datetime.now()
         exit_code = subprocess.call(args)
-        duration = datetime.datetime.now() - duration
-        self.log("sync {}: exit code is {}, process took {} secs",
-                 sync.name, exit_code, duration)
+        self.log("sync {}: process exit code is {}", sync.name,
+                 exit_code)
 
         if self.has_failed(exit_code):
-            raise subprocess.CalledProcessError(
-                "sync {} failed with exit code {}"
-                .format(sync.name, exit_code)
-            )
+            return -1
+        return 0
 

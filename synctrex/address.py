@@ -7,8 +7,10 @@ import urllib.parse
 class Address(str):
     url = None
 
-    def __new__(cls, url):
+    def __new__(cls, url, *path):
         s = str.__new__(cls, url)
+        if path:
+            s = os.path.join(s, path)
         s.url = urllib.parse.urlparse(url)
         return s
 

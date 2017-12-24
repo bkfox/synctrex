@@ -18,6 +18,8 @@ class Task:
     def __init__(self, sync, **kwargs):
         self.__dict__.update(kwargs)
         self.sync = sync
+        self.deps = []
+
 
 class Executor(Named):
     workers = 10
@@ -29,35 +31,39 @@ class Executor(Named):
     def __init__(self, **kwargs):
         self.__dict__.update(kwargs)
 
-    def add_task(self, sync, depth=0):
+    def expand_task(self, sync, stack = None, **init_kwargs):
         """
-        Add task and depenendenci
+        Construct tree, add to executor and check against stack.
         """
+        # Add task if missing and ensure that deps are added. It also
+        # checks on dependencies cycles
         if sync.name in self.tasks:
-            return self.tasks[sync.name]
+            task = self.tasks[sync.name]
+        else:
+            task = Task(sync, **init_kwargs)
+            self.tasks[sync.name] = task
+            self.todo.append(task)
 
-        task = Task(sync)
-        task.deps = []
-        task.depth = depth
-        self.tasks[sync.name] = task
-        self.todo.append(task)
-
-        # scan deps and add to syncs/tasks if required
-        depth += 1
-        for dep in sync.require:
-            dep = self.add_task(dep, depth)
-            if dep.depth < task.depth:
+        if stack is None:
+            stack = set()
+        elif task in stack:
                 raise ValueError(
                     "graph dependency cycle detected for sync {} "
-                    "(depth {}) with dep {} (depth: {})"
-                    .format(sync.name, task.depth, dep.sync.name, dep.depth)
+                    "with stack: {}"
+                    .format(sync.name, ', '.join(x.sync.name for x in stack))
                 )
-            task.deps.append(dep)
 
+        stack.add(task)
+        try:
+            for dep in sync.require:
+                dep = self.expand_task(dep, stack = stack)
+                task.deps.append(dep)
+        finally:
+            stack.remove(task)
         return task
 
     def _do_run(self, task):
-        # try:
+        try:
             sync = task.sync
             self.log("sync {} started", sync.name)
             start = datetime.datetime.now()
@@ -69,12 +75,11 @@ class Executor(Named):
                      sync.name, duration.total_seconds(), task.result)
 
             self.done.append(task)
-        # except Exception as e:
-        #    self.log("sync {} failed. Exception thrown: {}",
-        #             sync.name, e)
-        #    task.result = -1
-        # finally:
-            return task.result
+        except Exception as e:
+            task.result = -1
+            self.log("sync {} failed. Exception thrown: {}",
+                    sync.name, e)
+        return task.result
 
     def _try_submit(self, task, executor):
         """
@@ -98,19 +103,21 @@ class Executor(Named):
         failed = [ dep for dep in failed if dep.result ]
         if failed:
             self.log(
-                'sync {}: cancelled - required syncs have '
-                'failed: {}',
-                sync.name,
-                ', '.join(dep.name for dep in failed)
+                'sync {}: cancel caused by failed dependencies: {}',
+                sync.name, ', '.join(dep.name for dep in failed)
             )
             task.result = -2
             self.done.append(task)
             return False
 
         # submit to executor
-        self.log('task {}: submit', task.sync.name)
+        self.log('sync {}: submit task', task.sync.name)
         executor.submit(self._do_run, task)
         return True
+
+    def add_syncs(self, syncs):
+        for sync in syncs:
+            self.expand_task(sync)
 
     def run(self, *syncs):
         # done is shared across threads: case of concurrent
@@ -124,7 +131,7 @@ class Executor(Named):
 
         # construct task tree & update todo list
         for sync in syncs:
-            self.add_task(sync)
+            self.expand_task(sync)
 
         with ThreadPoolExecutor(max_workers=self.workers) as executor:
             while self.todo:

@@ -1,5 +1,3 @@
-from threading import Lock
-
 from synctrex.register import Register
 from synctrex.base import Named
 
@@ -14,13 +12,10 @@ Default register for Sync instances.
 """
 
 
-# FIXME: graph cycle is guaranteed only when dependencies are set at the
-# sync instanciation. Avoid further write of require (with read property
-# of a tuple) in order to avoid to implement graph cycles detection?
-
 class Sync(Named):
     """
-    Instance of Sync are registered to Syncs at ``__init__``.
+    Define a synchronisation between a :py:attr:source and and a
+    :py:attr:dest.
     """
     name = ''
     """
@@ -30,6 +25,10 @@ class Sync(Named):
     """
     Synchronisation dependencies
     """
+    method = None
+    """
+    Method instance to use
+    """
     groups = []
     """
     Groups Sync belongs to
@@ -38,7 +37,7 @@ class Sync(Named):
     """
     Address/URI of data to copy from FIXME
     """
-    include = []
+    files = []
     """
     List of files to synchronise (depends on method used)
     """
@@ -54,14 +53,13 @@ class Sync(Named):
     """
     Subdirectory to copy data into
     """
-    method = None
-    """
-    Method instance to use
-    """
 
-    def __init__(self, register = syncs, clone_from = None, **kwargs):
+    def __init__(self, method, register = syncs, clone_from = None,
+                 **kwargs):
         """
-        :param inherit: copy attributes from this sync
+        :params method: method to apply when running this sync
+        :params register: register the Sync to this register
+        :params clone_from: get default values from this Sync;
         """
         if clone_from:
             self.__dict__.update({
@@ -72,11 +70,8 @@ class Sync(Named):
         self.__dict__.update(kwargs)
         register.register(self)
 
-        if self.source: self.source = Address(self.source)
-        if self.dest: self.dest = Address(self.dest)
+        self.require = self.require or []
 
-        # require is read only
-        self.Lock = Lock()
 
     def run(self):
         """
@@ -84,9 +79,13 @@ class Sync(Named):
 
         :returns: :py:meth:method.run's call return.
         """
-        self.log('start sync')
-        import time
-        time.sleep(len(self.name)*3)
-        return 0
+        if not self.method:
+            return 0
+            raise ValueError('no method assigned')
+
+        if not self.method.is_available():
+            raise ValueError('method not available')
+
+        return self.method.run(self)
 
 
